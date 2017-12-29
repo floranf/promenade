@@ -87,17 +87,6 @@ def _bykey(item, key):
     return []
 
 
-def _apply(item, filters):
-    """ apply the list of function to item """
-    input = [item]
-    for args, func in filters:
-        output = []
-        for i in input:
-            output += func(i, args)
-        input = output  
-    return input
-
-
 def _getfunc(str):
     for f in _filters:
         if f.regex.match(str):
@@ -106,29 +95,65 @@ def _getfunc(str):
         raise Exception("Could not find filter for '{}'".format(str))
 
 
-def walk(data, *steps, **options):
+def _apply_filters(inputs, filters):
+    """ apply the list of filters to list of inputs """
+    for args, func in filters:
+        inputs = [func(i, args) for i in inputs]  
+    return inputs
+
+
+def _apply_str(input, filter_str):
+    parts = [p for p in filter_str.split(delim) if p]
+    filters = [_getfunc(p) for p in parts]
+    return _apply_filters(input, filters)
+
+
+def _apply_callable(input, filter_call):
+    return _apply(input, [_Filter(None, filter_call)])
+
+
+def walk(inputs, *steps, **options):
     """ data is the data structure you want to explore
     steps is a list of string, multi-part string, function, list of functions
     options is a list of named args
     """
     delim = options.get('delim', '/')
-    path = []
+
     for step in steps:
         if isinstance(step, str):
-            steps = [p for p in step.split(delim) if p]
-            path += [_getfunc(p) for p in steps]
+            inputs = _apply_str(inputs, step)
 
         elif hasattr(step, '__call__'):
-            path.append((None, step))
+            inputs = _apply_callable(inputs, step)
 
+        # A list apply all function in sequence
         elif isinstance(step, list):
-            for i in step:
-                if isinstance(i, str):
-                    path.append(_getfunc(i))
+            outputs = []
+            for i in inputs:
+                for s in step:
+                     i = walk([i], s, **options)
+                outputs += i
+            inputs = outputs
 
-                elif hasattr(i, '__call__'):
-                    path.append((None, i))
-    return _apply(data, path)
+        # The set apply all filter to all inputs
+        elif isinstance(step, set):
+            outputs = []
+            for i in inputs:
+                for s in step:
+                    outputs += walk(i, s, **options)
+            inputs = outputs
+
+        # The dict apply on set of filter to 
+        elif isinstance(step, dict):
+            output = []
+            for i in inputs:
+                for condition, sub_steps in step.items():
+                    passed = walk(i, condition, **options)
+                    if passed:
+                        input = walk(output, sub_steps, **options)
+
+    return inputs
+
 
 def reset():
     _filters = []
